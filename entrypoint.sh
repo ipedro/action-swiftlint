@@ -23,16 +23,29 @@ fi
 
 # If DIFF_BASE is set and not empty, lint only changed files
 if [ -n "${DIFF_BASE}" ]; then
-	changedFiles=$(git --no-pager diff --name-only --relative FETCH_HEAD $(git merge-base FETCH_HEAD $DIFF_BASE) -- '*.swift')
+	# Fetch the base branch to ensure we have the reference
+	git fetch origin "${DIFF_BASE}:refs/remotes/origin/${DIFF_BASE}" 2>/dev/null || true
+	
+	# Try different comparison methods
+	if git rev-parse "origin/${DIFF_BASE}" >/dev/null 2>&1; then
+		# Compare against origin/base
+		changedFiles=$(git diff --name-only --diff-filter=d origin/${DIFF_BASE}...HEAD -- '*.swift' 2>/dev/null || echo "")
+	elif git rev-parse "${DIFF_BASE}" >/dev/null 2>&1; then
+		# Fallback: try base branch name directly
+		changedFiles=$(git diff --name-only --diff-filter=d ${DIFF_BASE}...HEAD -- '*.swift' 2>/dev/null || echo "")
+	else
+		echo "Warning: Could not resolve base ref '${DIFF_BASE}', linting all files"
+		changedFiles=""
+	fi
 
-	if [ -z "$changedFiles" ]; then
-		echo "No Swift file changed in this PR"
+	if [ -n "$changedFiles" ]; then
+		echo "Linting changed files in PR:"
+		echo "$changedFiles"
+		set -o pipefail && swiftlint "$@" -- $changedFiles | stripPWD | convertToGitHubActionsLoggingCommands
+	else
+		echo "No Swift files changed in this PR"
 		exit 0
 	fi
-	
-	echo "Linting changed files:"
-	echo "$changedFiles"
-	set -o pipefail && swiftlint "$@" -- $changedFiles | stripPWD | convertToGitHubActionsLoggingCommands
 else
 	# No DIFF_BASE - lint all Swift files
 	echo "Linting all Swift files"
